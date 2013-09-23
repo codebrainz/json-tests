@@ -1,0 +1,4 @@
+*.[ao]
+/src/json-parser
+/misc/
+/json++/
