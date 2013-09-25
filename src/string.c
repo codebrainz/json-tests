@@ -1,7 +1,8 @@
 #include "string.h"
 #include "util.h"
-#include <string.h>
 #include <ctype.h>
+#include <stdio.h>
+#include <string.h>
 
 static void json_string_free(JSON_Value *str)
 {
@@ -18,7 +19,7 @@ static JSON_Value *json_string_clone(JSON_Value *str)
 	return JSON_VALUE(new_str);
 }
 
-static int json_string_compare(JSON_Value *value1, JSON_Value *value2)
+static bool json_string_equal(const JSON_Value *value1, const JSON_Value *value2)
 {
 	JSON_String *str1, *str2;
 
@@ -28,30 +29,24 @@ static int json_string_compare(JSON_Value *value1, JSON_Value *value2)
 	str1 = JSON_STRING(value1);
 	str2 = JSON_STRING(value2);
 
-	if (str1->str == NULL && str2->str != NULL)
-		return -1;
-	else if (str1->str != NULL && str2->str == NULL)
-		return 1;
-	else if (str1->str == NULL && str2->str == NULL)
-		return 0;
-	else
-		return strcmp(str1->str, str2->str);
+	if (!str1->str || !str2->str)
+		return false;
+
+	return json_strequal(str1->str, str2->str);
 }
 
 static JSON_String *json_string_to_string(JSON_Value *value, int indent)
 {
 	JSON_String *str;
+	char *indent_str;
+
 	assert(JSON_IS_STRING(value));
-	str = json_string_new("");
-	if (indent > 0)
-	{
-		char *indent_str = json_make_indent_string(indent);
-		json_string_append_cstr(str, indent_str);
-		json_free(indent_str);
-	}
-	json_string_append_cstr(str, "\"");
-	json_string_append(str, JSON_STRING(value));
-	json_string_append_cstr(str, "\"");
+
+	indent_str = json_make_indent_string(indent);
+	str = json_string_new_printf("%s\"%s\"", indent_str,
+		json_string_cstr(JSON_STRING(value)));
+	json_free(indent_str);
+
 	return str;
 }
 
@@ -65,10 +60,7 @@ JSON_String *json_string_new(const char *str)
 
 JSON_String *json_string_new_length(const char *str, size_t len)
 {
-	JSON_Value *value = json_value_alloc_size(sizeof(JSON_String),
-		JSON_VALUE_TYPE_STRING, json_string_free, json_string_clone,
-		json_string_compare, json_string_to_string);
-	JSON_String *s = JSON_STRING(value);
+	JSON_String *s = json_value_alloc(JSON_TYPE_STRING);
 	if (s)
 	{
 		if (!str || !len)
@@ -85,10 +77,45 @@ JSON_String *json_string_new_length(const char *str, size_t len)
 	return s;
 }
 
+JSON_String *json_string_new_printf(const char *fmt, ...)
+{
+	JSON_String *str;
+	char *temp;
+	va_list ap;
+	va_start(ap, fmt);
+	temp = json_strvprintf(fmt, ap);
+	va_end(ap);
+	str = json_string_new(temp);
+	json_free(temp);
+	return str;
+}
+
+JSON_String *json_string_new_vprintf(const char *fmt, va_list ap_in)
+{
+	JSON_String *str;
+	char *temp;
+	va_list ap;
+	va_copy(ap, ap_in);
+	temp = json_strvprintf(fmt, ap);
+	va_end(ap);
+	str = json_string_new(temp);
+	json_free(temp);
+	return str;
+}
+
 size_t json_string_length(JSON_String *str)
 {
 	assert(str);
 	return str->len;
+}
+
+JSON_String *json_string_init(JSON_String *str)
+{
+	assert(str != NULL);
+	json_value_init(JSON_TYPE_STRING, JSON_VALUE(str));
+	str->len = 0;
+	str->str = json_strdup("");
+	return str;
 }
 
 const char *json_string_cstr(JSON_String *str)
@@ -97,16 +124,16 @@ const char *json_string_cstr(JSON_String *str)
 	return str->str;
 }
 
-void json_string_set_cstr(JSON_String *str, const char *s)
+void json_string_assign(JSON_String *str, const char *s)
 {
 	size_t len = 0;
 	assert(str);
 	if (s != NULL)
 		len = strlen(s);
-	json_string_set_cstr_length(str, s, len);
+	json_string_assign_length(str, s, len);
 }
 
-void json_string_set_cstr_length(JSON_String *str, const char *s, size_t len)
+void json_string_assign_length(JSON_String *str, const char *s, size_t len)
 {
 	char *tmp;
 	assert(str);
@@ -131,6 +158,30 @@ void json_string_set_cstr_length(JSON_String *str, const char *s, size_t len)
 			str->str[str->len] = '\0';
 		}
 	}
+}
+
+void json_string_assign_printf(JSON_String *str, const char *fmt, ...)
+{
+	char *temp;
+	va_list ap;
+	assert(JSON_IS_STRING(str));
+	va_start(ap, fmt);
+	temp = json_strvprintf(fmt, ap);
+	va_end(ap);
+	json_string_assign(str, temp);
+	json_free(temp);
+}
+
+void json_string_assign_vprintf(JSON_String *str, const char *fmt, va_list ap_in)
+{
+	char *temp;
+	va_list ap;
+	assert(JSON_IS_STRING(str));
+	va_copy(ap, ap_in);
+	temp = json_strvprintf(fmt, ap);
+	va_end(ap);
+	json_string_assign(str, temp);
+	json_free(temp);
 }
 
 void json_string_append(JSON_String *str, JSON_String *str2)
@@ -167,6 +218,37 @@ void json_string_append_cstr_length(JSON_String *str, const char *str2, size_t l
 	}
 }
 
+void json_string_append_char(JSON_String *str, char c)
+{
+	char temp[2] = {0};
+	temp[0] = c;
+	json_string_append_cstr_length(str, temp, 1);
+}
+
+void json_string_append_printf(JSON_String *str, const char *fmt, ...)
+{
+	char *temp;
+	va_list ap;
+	assert(JSON_IS_STRING(str));
+	va_start(ap, fmt);
+	temp = json_strvprintf(fmt, ap);
+	va_end(ap);
+	json_string_append_cstr(str, temp);
+	json_free(temp);
+}
+
+void json_string_append_vprintf(JSON_String *str, const char *fmt, va_list ap_in)
+{
+	char *temp;
+	va_list ap;
+	assert(JSON_IS_STRING(str));
+	va_copy(ap, ap_in);
+	temp = json_strvprintf(fmt, ap);
+	va_end(ap);
+	json_string_append_cstr(str, temp);
+	json_free(temp);
+}
+
 void json_string_prepend(JSON_String *str, JSON_String *str2)
 {
 	assert(str2);
@@ -200,6 +282,37 @@ void json_string_prepend_cstr_length(JSON_String *str, const char *str2, size_t 
 		str->len = new_len;
 		str->str[str->len] = '\0';
 	}
+}
+
+void json_string_prepend_char(JSON_String *str, char c)
+{
+	char temp[2] = {0};
+	temp[0] = c;
+	json_string_prepend_cstr_length(str, temp, 1);
+}
+
+void json_string_prepend_printf(JSON_String *str, const char *fmt, ...)
+{
+	char *temp;
+	va_list ap;
+	assert(JSON_IS_STRING(str));
+	va_start(ap, fmt);
+	temp = json_strvprintf(fmt, ap);
+	va_end(ap);
+	json_string_prepend_cstr(str, temp);
+	json_free(temp);
+}
+
+void json_string_prepend_vprintf(JSON_String *str, const char *fmt, va_list ap_in)
+{
+	char *temp;
+	va_list ap;
+	assert(JSON_IS_STRING(str));
+	va_copy(ap, ap_in);
+	temp = json_strvprintf(fmt, ap);
+	va_end(ap);
+	json_string_prepend_cstr(str, temp);
+	json_free(temp);
 }
 
 JSON_String *json_string_lstrip(JSON_String *str)
@@ -242,4 +355,21 @@ JSON_String *json_string_rstrip(JSON_String *str)
 	}
 
 	return str;
+}
+
+struct JSON_StringClass
+{
+	JSON_ValueClass base__;
+};
+
+void *json_string_get_class(void)
+{
+	static struct JSON_StringClass json_string_class = { {
+		sizeof(JSON_String),
+		json_string_free,
+		json_string_clone,
+		json_string_equal,
+		json_string_to_string,
+	} };
+	return &json_string_class;
 }

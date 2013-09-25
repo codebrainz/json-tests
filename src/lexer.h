@@ -18,16 +18,18 @@ typedef struct
 	JSON_Value base__;
 	JSON_String *str;
 	JSON_String *value;
-	size_t offset;
-	size_t line;
-	size_t column;
+	uint32_t offset;
+	uint32_t line;
+	uint32_t column;
 	uint32_t lastchar;
 }
 JSON_Lexer;
 
-#define JSON_LEXER(v)    ((JSON_Lexer*)(v))
-#define JSON_IS_LEXER(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE(v)->type == JSON_VALUE_TYPE_LEXER))
+#define JSON_LEXER(v)      ((JSON_Lexer*)(v))
+#define JSON_TYPE_LEXER    json_lexer_get_class()
+#define JSON_IS_LEXER(v)   JSON_LIKELY(((v) != NULL) && (JSON_VALUE_CLASS(v) == JSON_TYPE_LEXER))
 
+void *json_lexer_get_class(void);
 JSON_Lexer *json_lexer_new(JSON_String *input_str);
 JSON_Lexer *json_lexer_new_from_cstr(const char *input_str);
 JSON_Lexer *json_lexer_new_from_cstr_length(const char *input_str, size_t len);

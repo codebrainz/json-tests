@@ -15,9 +15,12 @@ typedef struct
 JSON_Number;
 
 #define JSON_NUMBER(v)    ((JSON_Number*)(v))
-#define JSON_IS_NUMBER(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE(v)->type == JSON_VALUE_TYPE_NUMBER))
+#define JSON_TYPE_NUMBER  json_number_get_class()
+#define JSON_IS_NUMBER(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE_CLASS(v) == JSON_TYPE_NUMBER))
 
+void *json_number_get_class(void);
 JSON_Number *json_number_new(double value);
+JSON_Number *json_number_init(JSON_Number *num);
 double json_number_get(JSON_Number *num);
 void json_number_set(JSON_Number *num, double value);
 

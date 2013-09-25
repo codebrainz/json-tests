@@ -14,9 +14,11 @@ typedef struct
 JSON_Null;
 
 #define JSON_NULL(v)    ((JSON_Null*)(v))
-#define JSON_IS_NULL(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE(v)->type == JSON_VALUE_TYPE_NULL))
+#define JSON_TYPE_NULL  json_null_get_class()
+#define JSON_IS_NULL(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE_CLASS(v) == JSON_TYPE_NULL))
 
-JSON_Null *json_null_new(void);
+void *json_null_get_class(void);
+JSON_Null *json_null(void);
 
 #ifdef __cplusplus
 } // extern "C"

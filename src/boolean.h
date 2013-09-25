@@ -15,11 +15,13 @@ typedef struct
 JSON_Boolean;
 
 #define JSON_BOOLEAN(v)    ((JSON_Boolean*)(v))
-#define JSON_IS_BOOLEAN(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE(v)->type == JSON_VALUE_TYPE_BOOLEAN))
+#define JSON_TYPE_BOOLEAN  json_boolean_get_class()
+#define JSON_IS_BOOLEAN(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE_CLASS(v) == JSON_TYPE_BOOLEAN))
 
-JSON_Boolean *json_boolean_new(bool value);
+void *json_boolean_get_class(void);
+JSON_Boolean *json_boolean_true(void);
+JSON_Boolean *json_boolean_false(void);
 bool json_boolean_get(JSON_Boolean *b);
-void json_boolean_set(JSON_Boolean *b, bool value);
 
 #ifdef __cplusplus
 } // extern "C"

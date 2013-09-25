@@ -14,9 +14,7 @@ static void json_lexer_free(JSON_Value *value)
 
 static JSON_Lexer *json_lexer_new_internal(void)
 {
-	JSON_Value *value = json_value_alloc_size(sizeof(JSON_Lexer),
-		JSON_VALUE_TYPE_LEXER, json_lexer_free, NULL, NULL, NULL);
-	JSON_Lexer *lex = JSON_LEXER(value);
+	JSON_Lexer *lex = json_value_alloc(JSON_TYPE_LEXER);
 	lex->str = json_string_new("");
 	lex->value = json_string_new("");
 	lex->lastchar = JSON_LEXER_ERROR;
@@ -43,7 +41,7 @@ JSON_Lexer *json_lexer_new_from_cstr_length(const char *input_str, size_t len)
 	assert(input_str != NULL);
 	assert(len > 0);
 	lex = json_lexer_new_internal();
-	json_string_set_cstr_length(lex->str, input_str, len);
+	json_string_assign_length(lex->str, input_str, len);
 	return lex;
 }
 
@@ -61,9 +59,12 @@ JSON_Lexer *json_lexer_new_from_stream(FILE *fp)
 	temp = json_realloc(lex->str->str, len + 1);
 	if (temp != NULL)
 	{
+		size_t read_len;
 		lex->str->len = len;
 		lex->str->str = temp;
-		fread(lex->str->str, sizeof(char), len, fp);
+		read_len = fread(lex->str->str, sizeof(char), len, fp);
+		assert(read_len == len);
+		(void)read_len;
 		lex->str->str[lex->str->len] = '\0';
 	}
 
@@ -132,16 +133,11 @@ JSON_Token json_lexer_get_token(JSON_Lexer *lex)
 	// Identifiers (null, true, false)
 	if (isalpha(last))
 	{
-		char lc[2] = {0};
 		JSON_String *ident;
 		JSON_Token tok = JSON_TOKEN_ERROR;
-		lc[0] = last;
-		ident = json_string_new_length(lc, 1);
+		ident = json_string_new_printf("%c", (char) last);
 		while (isalnum( (last = json_lexer_getchar(lex)) ) || last == '_')
-		{
-			lc[0] = last;
-			json_string_append_cstr_length(ident, lc, 1);
-		}
+			json_string_append_char(ident, last);
 		if (json_strequal(json_string_cstr(ident), "null"))
 			tok = JSON_TOKEN_NULL;
 		else if (json_strequal(json_string_cstr(ident), "true"))
@@ -156,16 +152,14 @@ JSON_Token json_lexer_get_token(JSON_Lexer *lex)
 	// FIXME: write this properly
 	if (isdigit(last) || last == '.')
 	{
-		char lc[2] = {0};
 		JSON_String *ident = json_string_new("");
 		do
 		{
-			lc[0] = last;
-			json_string_append_cstr_length(ident, lc, 1);
+			json_string_append_char(ident, last);
 			last = json_lexer_getchar(lex);
 		}
 		while (isdigit(last) || last == '.');
-		json_string_set_cstr_length(lex->value, ident->str, ident->len);
+		json_string_assign_length(lex->value, ident->str, ident->len);
 		json_value_unref(ident);
 		return JSON_TOKEN_NUMBER;
 	}
@@ -174,15 +168,13 @@ JSON_Token json_lexer_get_token(JSON_Lexer *lex)
 	// String literals
 	if (last == '"')
 	{
-		char lc[2] = {0};
 		JSON_String *str = json_string_new("");
 		do
 		{
-			lc[0] = last;
-			json_string_append_cstr_length(str, lc, 1);
+			json_string_append_char(str, last);
 			last = json_lexer_getchar(lex);
 		} while (last != '"' && last != JSON_LEXER_EOF);
-		json_string_set_cstr_length(lex->value, str->str, str->len);
+		json_string_assign_length(lex->value, str->str, str->len);
 		json_value_unref(str);
 		return JSON_TOKEN_STRING;
 	}
@@ -196,4 +188,21 @@ JSON_Token json_lexer_get_token(JSON_Lexer *lex)
 	temp = last;
 	last = json_lexer_getchar(lex);
 	return temp;
+}
+
+struct JSON_LexerClass
+{
+	JSON_ValueClass base__;
+};
+
+void *json_lexer_get_class(void)
+{
+	static struct JSON_LexerClass json_lexer_class = { {
+		sizeof(JSON_Lexer),
+		json_lexer_free,
+		NULL,
+		NULL,
+		NULL,
+	} };
+	return &json_lexer_class;
 }

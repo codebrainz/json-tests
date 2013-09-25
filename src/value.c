@@ -3,67 +3,112 @@
 #include "string.h"
 #include <stdarg.h>
 
-void *json_value_alloc_size(size_t sz, JSON_ValueType type,
-	JSON_FreeFunc free_func, JSON_CloneFunc clone_func,
-	JSON_CompareFunc compare_func, JSON_ToStringFunc to_string_func)
+void *json_value_init(void *class_, JSON_Value *value)
 {
-	JSON_Value *value = json_malloc(sz);
+	JSON_ValueClass *value_class = class_;
+	assert(class_ != NULL);
+	assert(value != NULL);
+	memset(value, 0, value_class->size);
+	value->class__ = class_;
+	value->flags = JSON_VALUE_FLAG_FLOATING;
+	value->ref_count = 1;
+	return value;
+}
+
+void *json_value_alloc(void *class_)
+{
+	JSON_ValueClass *value_class = class_;
+	JSON_Value *value;
+
+	assert(value_class != NULL);
+
+	value = json_malloc(value_class->size);
 	if (value != NULL)
 	{
-		value->type = type;
-		value->ref_count = 1;
-		value->free = free_func;
-		value->clone = clone_func;
-		value->compare = compare_func;
-		value->to_string = to_string_func;
+		json_value_init(class_, value);
+		value->flags |= JSON_VALUE_FLAG_ON_HEAP;
 	}
+
 	return value;
 }
 
 static void json_value_free(void *v)
 {
-	assert(JSON_IS_VALUE(v));
-	if (JSON_VALUE(v)->free)
-		JSON_VALUE(v)->free(JSON_VALUE(v));
-	json_free(v);
+	JSON_Value *value = v;
+	JSON_ValueClass *value_class;
+	assert(v != NULL);
+	value_class = JSON_VALUE_CLASS(v);
+	assert(value_class != NULL);
+	if (value_class->free)
+		value_class->free(JSON_VALUE(v));
+	if (value->flags & JSON_VALUE_FLAG_ON_HEAP)
+		json_free(v);
+	else
+		memset(value, 0, value_class->size);
 }
 
 void *json_value_clone(const void *v)
 {
-	assert(JSON_IS_VALUE(v));
-	if (JSON_VALUE(v)->clone)
-		return JSON_VALUE(v)->clone(JSON_VALUE(v));
+	JSON_ValueClass *value_class;
+	assert(v != NULL);
+	value_class = JSON_VALUE_CLASS(v);
+	assert(value_class != NULL);
+	if (value_class->clone)
+		return value_class->clone(JSON_VALUE(v));
 	return NULL;
 }
 
-int json_value_compare(const void *v1, const void *v2)
+bool json_value_equal(const void *v1, const void *v2)
 {
-	assert(JSON_IS_VALUE(v1));
-	assert(JSON_IS_VALUE(v2));
-	if (JSON_VALUE(v1)->compare)
-		return JSON_VALUE(v1)->compare(JSON_VALUE(v1), JSON_VALUE(v2));
-	return 0;
+	JSON_ValueClass *value_class1, *value_class2;
+	assert(v1 != NULL);
+	assert(v2 != NULL);
+	value_class1 = JSON_VALUE_CLASS(v1);
+	value_class2 = JSON_VALUE_CLASS(v2);
+	if (!value_class1 || !value_class2 || (value_class1 != value_class2))
+		return false;
+	assert(value_class1 != NULL);
+	assert(value_class2 != NULL);
+	if (value_class1->equal)
+		return value_class1->equal(JSON_VALUE(v1), JSON_VALUE(v2));
+	return false;
 }
 
 JSON_String *json_value_to_string(const void *v, int indent)
 {
-	assert(JSON_IS_VALUE(v));
-	if (JSON_VALUE(v)->to_string)
-		return JSON_VALUE(v)->to_string(JSON_VALUE(v), indent);
+	JSON_ValueClass *value_class;
+	assert(v != NULL);
+	value_class = JSON_VALUE_CLASS(v);
+	assert(value_class != NULL);
+	if (value_class->to_string)
+		return value_class->to_string(JSON_VALUE(v), indent);
 	return json_string_new("");
 }
 
 void *json_value_ref(void *v)
 {
-	assert(JSON_IS_VALUE(v));
-	assert(JSON_VALUE(v)->ref_count < ((size_t)-1));
+	assert(v != NULL);
+	assert(JSON_VALUE(v)->ref_count < ((uint32_t)-1));
 	JSON_VALUE(v)->ref_count++;
 	return v;
 }
 
+void *json_value_ref_sink(void *v)
+{
+	JSON_Value *value = v;
+	assert(v != NULL);
+	if (value->flags & JSON_VALUE_FLAG_FLOATING)
+	{
+		value->flags &= ~JSON_VALUE_FLAG_FLOATING;
+		return value;
+	}
+	else
+		return json_value_ref(value);
+}
+
 void *json_value_unref(void *v)
 {
-	assert(JSON_IS_VALUE(v));
+	assert(v != NULL);
 	assert(JSON_VALUE(v)->ref_count > 0);
 	if (JSON_VALUE(v)->ref_count > 1)
 		JSON_VALUE(v)->ref_count--;

@@ -2,207 +2,81 @@
 #include "value.h"
 #include <stdio.h>
 
-#ifdef JSON_ALLOC_THREAD_SAFE
-#include <pthread.h>
-static pthread_mutex_t json_alloc_mutex;
-# define JSON_ALLOC_MUTEX_INIT()   pthread_mutex_init(&json_alloc_mutex, NULL)
-# define JSON_ALLOC_MUTEX_DEINIT() pthead_mutex_deinit(&json_alloc_mutex)
-# define JSON_ALLOC_MUTEX_LOCK()   pthread_mutex_lock(&json_alloc_mutex)
-# define JSON_ALLOC_MUTEX_UNLOCK() pthread_mutex_unlock(&json_alloc_mutex)
-#else
-# define JSON_ALLOC_MUTEX_INIT()   do {} while (false)
-# define JSON_ALLOC_MUTEX_DEINIT() do {} while (false)
-# define JSON_ALLOC_MUTEX_LOCK()   do {} while (false)
-# define JSON_ALLOC_MUTEX_UNLOCK() do {} while (false)
-#endif
+#define JSON_ABORT_OOM(ptr)          \
+do {                                 \
+  if (JSON_UNLIKELY(!ptr)) {         \
+    fputs("Out of memory.", stderr); \
+    abort();                         \
+  }                                  \
+} while (false)
 
-#ifndef JSON_MALLOC
-# define JSON_MALLOC malloc
-#endif
-#ifndef JSON_CALLOC
-# define JSON_CALLOC calloc
-#endif
-#ifndef JSON_REALLOC
-# define JSON_REALLOC realloc
-#endif
-#ifndef JSON_FREE
-# define JSON_FREE free
-#endif
-
-#ifndef NDEBUG
-# define JSON_ALLOC_STATS 1
-#endif
-
-#ifdef JSON_ALLOC_STATS
-static size_t json_bytes_allocated = 0;
-static size_t json_bytes_freed = 0;
-#endif
-
-static bool json_alloc_initialized = false;
-
-static void json_alloc_deinit(void)
+static struct JSON_AllocData
 {
-	if (JSON_LIKELY(json_alloc_initialized))
-	{
-		JSON_ALLOC_MUTEX_DEINIT();
-
-#ifdef JSON_ALLOC_STATS
-		fputs("==================================\n", stderr);
-		fprintf(stderr, "JSON Allocator Summary:\n"
-		                "  Bytes allocated: %lu\n"
-		                "  Bytes freed:     %lu\n",
-		                json_bytes_allocated,
-		                json_bytes_freed);
-		if (json_bytes_allocated > json_bytes_freed)
-		{
-			fprintf(stderr, "Warning: not all memory freed, %lu was leaked\n",
-				json_bytes_allocated - json_bytes_freed);
-		}
-		json_bytes_allocated = 0;
-		json_bytes_freed = 0;
-#endif
-		json_alloc_initialized = false;
-	}
+	JSON_AllocMallocFunc malloc_fn;
+	JSON_AllocReallocFunc realloc_fn;
+	JSON_AllocFreeFunc free_fn;
 }
+json_alloc_data = { malloc, realloc, free };
 
-static void json_alloc_init(void)
+bool json_set_allocator(JSON_AllocMallocFunc malloc_fn,
+	JSON_AllocReallocFunc realloc_fn, JSON_AllocFreeFunc free_fn)
 {
-	if (JSON_UNLIKELY(!json_alloc_initialized))
+	// If all functions are NULL, use defaults
+	if (malloc_fn == NULL && realloc_fn == NULL && free_fn == NULL)
 	{
-		JSON_ALLOC_MUTEX_INIT();
-		atexit(json_alloc_deinit);
-#ifdef JSON_ALLOC_STATS
-		json_bytes_allocated = 0;
-		json_bytes_freed = 0;
-#endif
-		json_alloc_initialized = true;
+		json_alloc_data.malloc_fn = malloc;
+		json_alloc_data.realloc_fn = realloc;
+		json_alloc_data.free_fn = free;
+		return true;
 	}
-}
-
-void *json_calloc(size_t n, size_t sz)
-{
-	uint32_t alloc_sz;
-	void *ptr;
-
-	json_alloc_init();
-
-	JSON_ALLOC_MUTEX_LOCK();
-
-	alloc_sz = (n * sz);
-#ifdef JSON_ALLOC_STATS
-	alloc_sz += sizeof(uint32_t);
-#endif
-	ptr = JSON_MALLOC(alloc_sz);
-
-	if (ptr != NULL)
+	// If all functions are not NULL, use them
+	else if (malloc_fn != NULL && realloc_fn != NULL && free_fn != NULL)
 	{
-#ifdef JSON_ALLOC_STATS
-		uint32_t *hdr_ptr = ((uint32_t*)ptr);
-		hdr_ptr[0] = alloc_sz;
-		ptr = hdr_ptr + 1;
-		memset(ptr, 0, alloc_sz - sizeof(uint32_t));
-		json_bytes_allocated += alloc_sz;
-#else
-		memset(ptr, 0, alloc_sz);
-#endif
+		json_alloc_data.malloc_fn = malloc_fn;
+		json_alloc_data.realloc_fn = realloc_fn;
+		json_alloc_data.free_fn = free_fn;
+		return true;
 	}
-#ifndef NDEBUG
+	// If there's a mix-and-match, just bail-out/return, we're screwed
 	else
 	{
-		fputs("Out of memory, aborting.", stderr);
-		abort();
-	}
-#endif
-
-	JSON_ALLOC_MUTEX_UNLOCK();
-
-	return ptr;
-}
-
-void *json_realloc(void *ptr, size_t sz)
-{
-	void *new_ptr = NULL;
-
-	json_alloc_init();
-
-	assert(sz > 0);
-
-	if (ptr != NULL)
-	{
-		uint32_t new_sz = sz;
-
-#ifdef JSON_ALLOC_STATS
-		uint32_t *hdr_ptr = ((uint32_t*)ptr) - 1;
-		uint32_t old_sz = hdr_ptr[0];
-		new_sz += sizeof(uint32_t);
-#endif
-
-		JSON_ALLOC_MUTEX_LOCK();
-
-#ifndef JSON_ALLOC_STATS
-		new_ptr = JSON_REALLOC(ptr, new_sz);
-#else
-		new_ptr = JSON_REALLOC(hdr_ptr, new_sz);
-		if (new_ptr != NULL)
-		{
-			hdr_ptr = ((uint32_t*)new_ptr);
-			hdr_ptr[0] = new_sz;
-			new_ptr = hdr_ptr + 1;
-
-			if (new_sz > old_sz)
-			{
-				size_t new_sz_ = new_sz - sizeof(uint32_t);
-				size_t old_sz_ = old_sz - sizeof(uint32_t);
-				memset(new_ptr + old_sz_, 0, new_sz_ - old_sz_);
-				json_bytes_allocated += (new_sz - old_sz);
-			}
-			else
-				json_bytes_freed += (old_sz - new_sz);
-		}
-#endif
-
-		JSON_ALLOC_MUTEX_UNLOCK();
-	}
-	else
-		new_ptr = json_malloc(sz);
-
 #ifndef NDEBUG
-	if (new_ptr == NULL)
-	{
-		fputs("Out of memory, aborting", stderr);
+		fprintf(stderr,
+		        "The function '%s' requires either all parameters "
+		        "to be NULL (ie. use defaults) or ALL arguments to "
+		        "NOT be NULL. Mixing and matching default and "
+		        "user-provided allocators is asking for disaster. "
+		        "Sorry.", __func__);
 		abort();
-	}
 #endif
-
-	return new_ptr;
+		return false;
+	}
 }
 
-void json_free(void *ptr)
+void *json_malloc(size_t sz)
 {
-#ifdef JSON_ALLOC_STATS
-	uint32_t *hdr_ptr;
-#endif
+	void *mem;
+	assert(json_alloc_data.malloc_fn);
+	mem = json_alloc_data.malloc_fn(sz);
+	JSON_ABORT_OOM(mem);
+	memset(mem, 0, sz); // make sure memory is zeroed-out
+	return mem;
+}
 
-	json_alloc_init();
+void *json_realloc(void *mem, size_t sz)
+{
+	void *new_mem;
+	assert(json_alloc_data.realloc_fn);
+	new_mem = json_alloc_data.realloc_fn(mem, sz);
+	JSON_ABORT_OOM(new_mem);
+	return new_mem;
+}
 
-	assert(ptr);
-
-#ifdef JSON_ALLOC_STATS
-	hdr_ptr = ((uint32_t*)ptr) - 1;
-	assert(hdr_ptr[0] > 0);
-#endif
-
-	JSON_ALLOC_MUTEX_LOCK();
-
-#ifdef JSON_ALLOC_STATS
-	json_bytes_freed += hdr_ptr[0];
-	memset(hdr_ptr, 0, hdr_ptr[0]);
-	JSON_FREE(hdr_ptr);
-#else
-	JSON_FREE(ptr);
-#endif
-
-	JSON_ALLOC_MUTEX_UNLOCK();
+void json_free(void *mem)
+{
+	assert(mem);
+	assert(json_alloc_data.free_fn);
+	json_alloc_data.free_fn(mem);
 }
 
 char *json_strdup(const char *other)
@@ -247,12 +121,9 @@ bool json_strequal(const char *s1, const char *s2)
 {
 	if (!s1 && !s2)
 		return true;
-	else if (s1 && !s2)
-		return 1;
-	else if (!s1 && s2)
-		return -1;
-	else
-		return (strcmp(s1, s2) == 0);
+	else if ( (s1 && !s2) || (!s1 && s2) )
+		return false;
+	return (strcmp(s1, s2) == 0);
 }
 
 char *json_make_indent_string(int level)
@@ -263,4 +134,70 @@ char *json_make_indent_string(int level)
 		memset(out, ' ', n_chars);
 	out[n_chars] = '\0';
 	return out;
+}
+
+// Adapated from vsnprintf()
+char *json_strvprintf(const char *fmt, va_list ap_in)
+{
+	int n, size = 64 /*guess*/;
+	char *p, *np;
+	va_list ap;
+
+	assert(fmt != NULL);
+
+	if ( !(p = json_malloc(size)) )
+		return NULL;
+
+	while (true)
+	{
+		va_copy(ap, ap_in);
+		n = vsnprintf(p, size, fmt, ap);
+		va_end(ap);
+
+		if (n > -1 && n < size)
+			return p;
+
+		if (n > -1)
+			size = n + 1;
+		else
+			size *= 2;
+
+		if ( (np = json_realloc(p, size)) == NULL )
+		{
+			json_free(p);
+			return NULL;
+		}
+
+		p = np;
+	}
+}
+
+char *json_strprintf(const char *fmt, ...)
+{
+	char *s;
+	va_list ap;
+	va_start(ap, fmt);
+	s = json_strvprintf(fmt, ap);
+	va_end(ap);
+	return s;
+}
+
+void json_print(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(stdout, fmt, ap);
+	va_end(ap);
+	fputc('\n', stdout);
+	fflush(stdout);
+}
+
+void json_printerr(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+	fputc('\n', stderr);
+	fflush(stderr);
 }

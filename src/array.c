@@ -18,7 +18,7 @@ static JSON_Value *json_array_clone(JSON_Value *arr)
 	JSON_Array *new_arr = json_array_new();
 	if (new_arr != NULL)
 	{
-		new_arr->array = json_calloc(JSON_ARRAY(arr)->size, sizeof(JSON_Value*));
+		new_arr->array = json_malloc(JSON_ARRAY(arr)->size * sizeof(JSON_Value*));
 		if (new_arr->array != NULL)
 		{
 			size_t i;
@@ -30,19 +30,27 @@ static JSON_Value *json_array_clone(JSON_Value *arr)
 	return JSON_VALUE(new_arr);
 }
 
-static int json_array_compare(JSON_Value *val1, JSON_Value *val2)
-{ // FIXME: compare array contents
+static bool json_array_equal(const JSON_Value *val1, const JSON_Value *val2)
+{
 	JSON_Array *arr1, *arr2;
+	size_t i;
+
 	assert(JSON_IS_ARRAY(val1));
 	assert(JSON_IS_ARRAY(val2));
+
 	arr1 = JSON_ARRAY(val1);
 	arr2 = JSON_ARRAY(val2);
-	if (arr1->size > arr2->size)
-		return 1;
-	else if (arr1->size < arr2->size)
-		return -1;
-	else /*if (arr1->size == arr2->size)*/
-		return 0;
+
+	if (json_array_size(arr1) != json_array_size(arr2))
+		return false;
+
+	for (i = 0; i < json_array_size(arr1); i++)
+	{
+		if (!json_value_equal(json_array_nth(arr1, i), json_array_nth(arr2, i)))
+			return false;
+	}
+
+	return true;
 }
 
 static JSON_String *json_array_to_string(JSON_Value *value, int indent)
@@ -55,7 +63,9 @@ static JSON_String *json_array_to_string(JSON_Value *value, int indent)
 	assert(JSON_IS_ARRAY(value));
 	arr = JSON_ARRAY(value);
 
-	str = json_string_new("[\n");
+	indent_str = json_make_indent_string(indent);
+	str = json_string_new_printf("%s[\n", indent_str);
+	json_free(indent_str);
 
 	indent++;
 
@@ -67,25 +77,28 @@ static JSON_String *json_array_to_string(JSON_Value *value, int indent)
 		if (i != (arr->size - 1))
 			json_string_append_cstr(str, ",\n");
 		else
-			json_string_append_cstr(str, "\n");
+			json_string_append_char(str, '\n');
 	}
 
 	indent--;
 
 	indent_str = json_make_indent_string(indent);
-	json_string_append_cstr(str, indent_str);
+	json_string_append_printf(str, "%s]", indent_str);
 	json_free(indent_str);
-	json_string_append_cstr(str, "]");
 
 	return str;
 }
 
 JSON_Array *json_array_new(void)
 {
-	JSON_Value *value = json_value_alloc_size(sizeof(JSON_Array),
-		JSON_VALUE_TYPE_ARRAY, json_array_free, json_array_clone,
-		json_array_compare, json_array_to_string);
-	return JSON_ARRAY(value);
+	return json_value_alloc(JSON_TYPE_ARRAY);
+}
+
+JSON_Array *json_array_init(JSON_Array *arr)
+{
+	assert(arr != NULL);
+	json_value_init(JSON_TYPE_ARRAY, JSON_VALUE(arr));
+	return arr;
 }
 
 size_t json_array_size(JSON_Array *arr)
@@ -125,13 +138,13 @@ bool json_array_insert(JSON_Array *arr, JSON_Value *value, size_t pos)
 		return false;
 
 	if (pos == (arr->size - 1))
-		arr->array[pos] = json_value_ref(value);
+		arr->array[pos] = json_value_ref_sink(value);
 	else
 	{
 		size_t i;
 		for (i = (arr->size - 1); i > pos; i--)
 			arr->array[i] = arr->array[i-1];
-		arr->array[pos] = json_value_ref(value);
+		arr->array[pos] = json_value_ref_sink(value);
 	}
 
 	return false;
@@ -158,4 +171,21 @@ void json_array_remove_nth(JSON_Array *arr, size_t pos)
 	}
 	else
 		json_array_resize(arr, arr->size - 1);
+}
+
+struct JSON_ArrayClass
+{
+	JSON_ValueClass base__;
+};
+
+void *json_array_get_class(void)
+{
+	static struct JSON_ArrayClass json_array_class = { {
+		sizeof(JSON_Array),
+		json_array_free,
+		json_array_clone,
+		json_array_equal,
+		json_array_to_string,
+	} };
+	return &json_array_class;
 }

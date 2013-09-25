@@ -17,9 +17,12 @@ typedef struct
 JSON_Array;
 
 #define JSON_ARRAY(v)    ((JSON_Array*)(v))
-#define JSON_IS_ARRAY(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE(v)->type == JSON_VALUE_TYPE_ARRAY))
+#define JSON_TYPE_ARRAY  json_array_get_class()
+#define JSON_IS_ARRAY(v) JSON_LIKELY(((v) != NULL) && (JSON_VALUE_CLASS(v) == JSON_TYPE_ARRAY))
 
+void *json_array_get_class(void);
 JSON_Array *json_array_new(void);
+JSON_Array *json_array_init(JSON_Array *arr);
 size_t json_array_size(JSON_Array *arr);
 JSON_Value *json_array_nth(JSON_Array *arr, size_t n);
 bool json_array_insert(JSON_Array *arr, JSON_Value *value, size_t pos);

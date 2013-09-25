@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+#include "util.h"
 #include "value.h"
 #include "null.h"
 #include "boolean.h"
